@@ -237,7 +237,7 @@ def calculate_travel_cost(distance_meters: int, travel_mode: str) -> int:
 
 # --- GenAI client ---
 def get_genai_model():
-    genai.configure(api_key='AIzaSyCn43FyMu0k4TpBrrXVo1KNRtPR1JuUoF4')
+    genai.configure(api_key='AIzaSyDYRX4tB69CrWFdfEer9uyzpNANuADCwqc')
     model = genai.GenerativeModel("gemini-1.5-flash")
     return model
 
