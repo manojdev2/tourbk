@@ -240,7 +240,7 @@ def get_weather_forecast(location: str, start_date: str, days: int) -> List[Weat
 
 # --- GenAI client ---
 def get_genai_model():
-    genai.configure(api_key='AIzaSyDYRX4tB69CrWFdfEer9uyzpNANuADCwqc')
+    genai.configure(api_key='AIzaSyAmTnj87jegLwFyWCM50vpq5D9zkSh0VBg')
     return genai.GenerativeModel("gemini-1.5-flash")
 
 # def clean_json_string(json_string: str) -> str:
