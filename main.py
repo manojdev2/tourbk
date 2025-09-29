@@ -241,7 +241,7 @@ def get_weather_forecast(location: str, start_date: str, days: int) -> List[Weat
 # --- GenAI client ---
 def get_genai_model():
     genai.configure(api_key='AIzaSyAmTnj87jegLwFyWCM50vpq5D9zkSh0VBg')
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-2.5-flash")
 
 def clean_json_string(json_string: str) -> str:
     # Remove code fences
@@ -301,14 +301,14 @@ def generate_itinerary_with_genai(user_inputs: dict) -> dict:
     prompt = f"""You are a travel expert for {destination}. Generate a {duration}-day itinerary with REAL, SPECIFIC places only.
 
 DESTINATION: {destination}
-THEMES: {themes_str} (focus on all selected themes throughout the trip)
+THEMES: {themes_str} (focus on only selected themes throughout the trip)
 BUDGET: INR {budget} total, for {traveler_count} traveler(s)
 ALL ACTIVITY COSTS ARE PER TRAVELER, NOT TOTAL.
 DATES: {start_date if start_date else "Flexible"}
 TRANSPORT: {preferred_transport}
 {comments_info}
 
-IMPORTANT: Mix activities from ALL selected themes ({themes_str}) across different days. Don't focus on just one theme per day.
+IMPORTANT: Mix activities from only selected themes ({themes_str}) across different days. Don't focus on just one theme per day.
 
 RETURN ONLY VALID JSON - NO other text, explanations, or markdown:
 
@@ -339,7 +339,7 @@ CRITICAL RULES:
 3. Each activity cost is per person (multiply by traveler_count for day and trip totals)
 4. Per traveler daily cost must not exceed INR {budget_per_person_per_day}
 5. All days combined for all travelers must not exceed total budget INR {budget}
-6. Include activities from ALL selected themes: {themes_str}
+6. Include activities from only selected themes: {themes_str}
 7. Categories should match selected themes: {themes_str}
 8. Include atleast 4-6 activities per day, if budget allows
 9. Vary the theme categories across days for diversity
@@ -1037,7 +1037,7 @@ async def analyze_user_preferences(user_comments: str, destination: str, themes:
         
         theme_keywords = {
             'food': ['food', 'eat', 'cuisine', 'restaurant', 'local dishes', 'cooking', 'chef', 'dining'],
-            'cultural': ['history', 'historical', 'museum', 'heritage', 'culture', 'traditional', 'art', 'music'],
+            'cultural': ['history', 'historical', 'museum',  'culture', 'traditional', 'art', 'music'],
             'adventure': ['adventure', 'hiking', 'outdoor', 'sports', 'thrill', 'climbing', 'trekking'],
             'nature': ['nature', 'park', 'garden', 'wildlife', 'scenic', 'forest', 'mountains', 'beach'],
             'shopping': ['shopping', 'market', 'buy', 'souvenir', 'boutique', 'mall', 'crafts'],
