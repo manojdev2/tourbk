@@ -30,13 +30,13 @@ class TripRequest(BaseModel):
     location: str
     duration: int
     budget: int
-    theme: str
+    themes: List[str]  # Changed from theme: str to themes: List[str]
     start_date: Optional[str] = None
     traveler_count: Optional[int] = 1
     preferred_transport: Optional[str] = "driving"
     from_location: Optional[str] = None
     to_location: Optional[str] = None
-    user_comments: Optional[str] = None  # New field for user feedback/preferences
+    user_comments: Optional[str] = None
 
 class Activity(BaseModel):
     name: str
@@ -84,13 +84,13 @@ class Itinerary(BaseModel):
     location: str
     duration: int
     budget: int
-    theme: str
+    themes: List[str]  # Changed from theme: str to themes: List[str]
     start_date: Optional[str] = None
     traveler_count: Optional[int] = None
     preferred_transport: Optional[str] = None
     from_location: Optional[str] = None
     to_location: Optional[str] = None
-    user_comments: Optional[str] = None  # Include user comments in response
+    user_comments: Optional[str] = None
     days: List[ItineraryDay]
     total_estimated_cost: Optional[int] = None
     hotels: Optional[List[Hotel]] = None
@@ -243,21 +243,6 @@ def get_genai_model():
     genai.configure(api_key='AIzaSyAmTnj87jegLwFyWCM50vpq5D9zkSh0VBg')
     return genai.GenerativeModel("gemini-1.5-flash")
 
-# def clean_json_string(json_string: str) -> str:
-#     if "```json" in json_string:
-#         json_match = re.search(r'```json\s*(.*?)\s*```', json_string, re.DOTALL)
-#         if json_match:
-#             json_string = json_match.group(1)
-#     json_string = json_string.strip()
-#     json_string = re.sub(r'//.*$', '', json_string, flags=re.MULTILINE)
-#     json_string = re.sub(r'/\*.*?\*/', '', json_string, flags=re.DOTALL)
-#     json_string = re.sub(r',\s*}', '}', json_string)
-#     json_string = re.sub(r',\s*]', ']', json_string)
-#     json_string = re.sub(r'(?<!")(\b\w+\b)(?=\s*:)', r'"\1"', json_string)
-#     # json_string = re.sub(r'(\w+)(\s*:)', r'"\1"\2', json_string)
-#     # json_string = re.sub(r'""(\w+)""(\s*:)', r'"\1"\2', json_string)
-#     return json_string
-
 def clean_json_string(json_string: str) -> str:
     # Remove code fences
     if json_string.strip().startswith("```"):
@@ -275,7 +260,6 @@ def clean_json_string(json_string: str) -> str:
     json_string = re.sub(r',\s*([}\]])', r'\1', json_string)
     
     return json_string
-
 
 def validate_json_structure(data: dict) -> bool:
     if not isinstance(data, dict) or "days" not in data or not isinstance(data["days"], list):
@@ -296,10 +280,14 @@ def generate_itinerary_with_genai(user_inputs: dict) -> dict:
     traveler_count = user_inputs.get('traveler_count', 1)
     budget = user_inputs['budget']
     duration = user_inputs['duration']
-    theme = user_inputs['theme']
+    themes = user_inputs['themes']  # Now it's a list
     start_date = user_inputs.get('start_date')
     preferred_transport = user_inputs.get('preferred_transport', 'any')
     user_comments = user_inputs.get('user_comments', '')
+
+    # Create themes string for prompt
+    themes_str = ", ".join(themes) if themes else "general"
+    primary_theme = themes[0] if themes else "cultural"
 
     comments_info = ""
     if user_comments:
@@ -313,12 +301,14 @@ def generate_itinerary_with_genai(user_inputs: dict) -> dict:
     prompt = f"""You are a travel expert for {destination}. Generate a {duration}-day itinerary with REAL, SPECIFIC places only.
 
 DESTINATION: {destination}
-THEME: {theme}
+THEMES: {themes_str} (focus on all selected themes throughout the trip)
 BUDGET: INR {budget} total, for {traveler_count} traveler(s)
 ALL ACTIVITY COSTS ARE PER TRAVELER, NOT TOTAL.
 DATES: {start_date if start_date else "Flexible"}
 TRANSPORT: {preferred_transport}
 {comments_info}
+
+IMPORTANT: Mix activities from ALL selected themes ({themes_str}) across different days. Don't focus on just one theme per day.
 
 RETURN ONLY VALID JSON - NO other text, explanations, or markdown:
 
@@ -334,7 +324,7 @@ RETURN ONLY VALID JSON - NO other text, explanations, or markdown:
           "longitude": 00.0000,
           "estimated_cost": {budget_per_activity_per_person},
           "duration_hours": 2.5,
-          "category": "{theme}",
+          "category": "one_of_selected_themes",
           "best_time": "10:00 AM - 1:00 PM"
         }}
       ],
@@ -349,9 +339,10 @@ CRITICAL RULES:
 3. Each activity cost is per person (multiply by traveler_count for day and trip totals)
 4. Per traveler daily cost must not exceed INR {budget_per_person_per_day}
 5. All days combined for all travelers must not exceed total budget INR {budget}
-6. Focus on {theme} theme
-7. Categories: sightseeing, food, adventure, cultural, shopping, nature, nightlife, heritage
-8. Include atlease 4-6 activities per day, if budget allows
+6. Include activities from ALL selected themes: {themes_str}
+7. Categories should match selected themes: {themes_str}
+8. Include atleast 4-6 activities per day, if budget allows
+9. Vary the theme categories across days for diversity
 """
 
     try:
@@ -386,7 +377,6 @@ CRITICAL RULES:
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         return generate_with_specific_places(user_inputs, destination)
-
 
 def extract_and_clean_json(text: str) -> str:
     """Enhanced JSON extraction with multiple strategies"""
@@ -502,22 +492,23 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
     """Generate itinerary with hardcoded real places with strict budget control for all travelers"""
     print(f"🔄 Generating with specific places for {destination}")
 
-    # Real places database
-    places_db = get_real_places_for_destination(destination.lower(), user_inputs['theme'])
+    # Real places database - now considers multiple themes
+    themes = user_inputs.get('themes', ['cultural'])
+    places_db = get_real_places_for_destination(destination.lower(), themes)
 
     if not places_db:
         return create_fallback_itinerary(user_inputs)
 
     duration = user_inputs['duration']
-    total_budget = user_inputs['budget']      # This is the TOTAL budget for ALL travelers
+    total_budget = user_inputs['budget']
     traveler_count = user_inputs.get('traveler_count', 1)
 
     print(f"📊 Budget Control: Total=₹{total_budget}, Duration={duration} days, Travelers={traveler_count}")
+    print(f"🎯 Selected Themes: {', '.join(themes)}")
 
-    # Strict budget distribution - total budget across all days (for group)
+    # Rest of the function remains the same but now considers multiple themes
     base_daily_budget = total_budget // duration
 
-    # --- Daily budgets logic
     daily_budgets = []
     remaining_budget = total_budget
 
@@ -551,14 +542,12 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
 
     for day_num in range(1, duration + 1):
         day_budget = daily_budgets[day_num - 1]
-        # Limit: 2-3 activities based on group budget per day
         min_cost_per_activity = 100 * traveler_count
         activities_per_day = min(3, max(2, day_budget // (800 * traveler_count)))
 
         print(f"🗓️ Day {day_num}: Budget=₹{day_budget}, Activities={activities_per_day}")
 
         day_places = []
-        # Pick unique places each day
         for place in available_places:
             if place["name"] not in used_places:
                 day_places.append(place)
@@ -566,7 +555,6 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
                 if len(day_places) >= activities_per_day:
                     break
 
-        # If we run out, cycle through unused for variety
         if len(day_places) < activities_per_day:
             remaining_needed = activities_per_day - len(day_places)
             available_places_copy = [
@@ -576,7 +564,6 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
             for i, place in enumerate(available_places_copy[:remaining_needed]):
                 day_places.append(place)
 
-        # Distribute group day budget across activities
         activities = []
         remaining_day_budget = day_budget
 
@@ -586,22 +573,22 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
             if is_last_activity:
                 activity_cost = remaining_day_budget
             else:
-                # Each cost will serve all travelers
                 activity_cost = int(day_budget * cost_percentages[i])
                 if activity_cost > remaining_day_budget:
                     activity_cost = remaining_day_budget
             activity_cost = max(min_cost_per_activity, activity_cost)
 
-            # Evenly split among travelers for display
             per_person_cost = max(100, activity_cost // traveler_count)
 
-            # Time slots
             start_hour = 9 + (i * 3)
             end_hour = start_hour + 2
 
+            # Enhanced description mentioning multiple themes
+            theme_context = f"Perfect for your {', '.join(themes)} themed trip"
+            
             activities.append({
                 "name": place["name"],
-                "description": f"{place['description']} Perfect for day {day_num} of your {user_inputs['theme']} themed trip.",
+                "description": f"{place['description']} {theme_context}.",
                 "latitude": place["latitude"] + random.uniform(-0.005, 0.005),
                 "longitude": place["longitude"] + random.uniform(-0.005, 0.005),
                 "estimated_cost": per_person_cost,
@@ -611,7 +598,6 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
             })
             remaining_day_budget -= activity_cost
 
-            # Stop if group budget sold out
             if remaining_day_budget <= 0:
                 break
 
@@ -626,10 +612,10 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
         actual_total_cost += day_total_cost
         print(f"✅ Day {day_num} Total: ₹{day_total_cost} (Budget: ₹{day_budget})")
 
-    # Final check - never exceed overall group budget
+    # Final budget adjustment if needed
     if actual_total_cost > total_budget:
         print(f"⚠️ Cost exceeded budget, adjusting: ₹{actual_total_cost} > ₹{total_budget}")
-        reduction_factor = (total_budget * 0.95) / actual_total_cost  # Use 95% to be safe
+        reduction_factor = (total_budget * 0.95) / actual_total_cost
         adjusted_total = 0
         for day in itinerary["days"]:
             adjusted_day_cost = 0
@@ -646,7 +632,6 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
     print(f"🎯 Final Result: ₹{actual_total_cost} / ₹{total_budget} budget")
     print(f"📊 Daily Costs: {[day['total_day_cost'] for day in itinerary['days']]}")
 
-    # Double-check
     calculated_total = sum(day['total_day_cost'] for day in itinerary['days'])
     if calculated_total != actual_total_cost:
         print(f"⚠️ Math mismatch: {calculated_total} vs {actual_total_cost}")
@@ -654,8 +639,8 @@ def generate_with_specific_places(user_inputs: dict, destination: str) -> dict:
 
     return itinerary
 
-def get_real_places_for_destination(destination: str, theme: str) -> list:
-    """Get real places for popular destinations with more variety"""
+def get_real_places_for_destination(destination: str, themes: List[str]) -> list:
+    """Get real places for popular destinations with theme-based filtering"""
     
     places = {
         "chennai": [
@@ -671,6 +656,14 @@ def get_real_places_for_destination(destination: str, theme: str) -> list:
             {"name": "Express Avenue Mall", "description": "Modern shopping mall with international and local brands", "latitude": 13.0569, "longitude": 80.2378, "category": "shopping"},
             {"name": "Parthasarathy Temple", "description": "Ancient Vaishnavite temple dedicated to Lord Krishna", "latitude": 13.0386, "longitude": 80.2569, "category": "heritage"},
             {"name": "Elliot's Beach", "description": "Quieter beach in Besant Nagar with cafes and clean environment", "latitude": 13.0064, "longitude": 80.2669, "category": "nature"},
+            {"name": "Spencer Plaza", "description": "One of India's first shopping malls with diverse retail options", "latitude": 13.0627, "longitude": 80.2707, "category": "shopping"},
+            {"name": "Santhome Cathedral", "description": "Historic cathedral with Portuguese colonial architecture", "latitude": 13.0336, "longitude": 80.2799, "category": "cultural"},
+            {"name": "VGP Universal Kingdom", "description": "Popular amusement park with thrilling rides and entertainment", "latitude": 12.9618, "longitude": 80.2464, "category": "adventure"},
+            {"name": "T. Nagar", "description": "Bustling shopping district famous for silk sarees and jewelry", "latitude": 13.0418, "longitude": 80.2341, "category": "shopping"},
+            {"name": "Birla Planetarium", "description": "Modern planetarium offering astronomy shows and space exhibitions", "latitude": 13.0604, "longitude": 80.2548, "category": "cultural"},
+            {"name": "Pulicat Lake", "description": "Scenic saltwater lagoon perfect for bird watching and boating", "latitude": 13.4167, "longitude": 80.0833, "category": "nature"},
+            {"name": "Phoenix MarketCity", "description": "Premium shopping and entertainment destination", "latitude": 13.0434, "longitude": 80.2290, "category": "shopping"},
+            {"name": "Cholamandal Artists' Village", "description": "India's largest artists' commune showcasing contemporary art", "latitude": 12.8851, "longitude": 80.2252, "category": "cultural"}
         ],
         "bangalore": [
             {"name": "Lalbagh Botanical Garden", "description": "240-acre botanical garden with diverse flora and glass house", "latitude": 12.9507, "longitude": 77.5848, "category": "nature"},
@@ -680,11 +673,13 @@ def get_real_places_for_destination(destination: str, theme: str) -> list:
             {"name": "Tipu Sultan's Summer Palace", "description": "Historic wooden palace showcasing Indo-Islamic architecture", "latitude": 12.9591, "longitude": 77.5670, "category": "heritage"},
             {"name": "Commercial Street", "description": "Bustling shopping street famous for clothes and accessories", "latitude": 12.9833, "longitude": 77.6094, "category": "shopping"},
             {"name": "UB City Mall", "description": "Luxury shopping destination with premium brands", "latitude": 12.9719, "longitude": 77.5937, "category": "shopping"},
-            {"name": "Nandi Hills", "description": "Hill station near Bangalore perfect for sunrise views", "latitude": 13.3703, "longitude": 77.6838, "category": "nature"},
+            {"name": "Nandi Hills", "description": "Hill station near Bangalore perfect for sunrise views", "latitude": 13.3703, "longitude": 77.6838, "category": "adventure"},
             {"name": "Vidhana Soudha", "description": "Imposing government building showcasing Neo-Dravidian architecture", "latitude": 12.9794, "longitude": 77.5912, "category": "heritage"},
             {"name": "Bannerghatta National Park", "description": "Wildlife sanctuary with tigers, lions and safari experiences", "latitude": 12.7957, "longitude": 77.5719, "category": "adventure"},
             {"name": "Bull Temple", "description": "16th-century temple with massive granite Nandi bull statue", "latitude": 12.9434, "longitude": 77.5847, "category": "heritage"},
             {"name": "Ulsoor Lake", "description": "Scenic lake in city center perfect for boating", "latitude": 12.9817, "longitude": 77.6094, "category": "nature"},
+            {"name": "Biere Club", "description": "Popular nightlife destination with craft beers and live music", "latitude": 12.9716, "longitude": 77.5946, "category": "nightlife"},
+            {"name": "Koshy's Restaurant", "description": "Iconic heritage restaurant serving authentic South Indian cuisine", "latitude": 12.9716, "longitude": 77.5946, "category": "food"}
         ],
         "mumbai": [
             {"name": "Gateway of India", "description": "Iconic arch monument overlooking the Arabian Sea", "latitude": 18.9220, "longitude": 72.8347, "category": "heritage"},
@@ -699,12 +694,14 @@ def get_real_places_for_destination(destination: str, theme: str) -> list:
             {"name": "Colaba Causeway", "description": "Shopping street known for handicrafts and souvenirs", "latitude": 18.9067, "longitude": 72.8147, "category": "shopping"},
             {"name": "Sanjay Gandhi National Park", "description": "Urban national park with Kanheri Caves", "latitude": 19.2147, "longitude": 72.9643, "category": "nature"},
             {"name": "Siddhivinayak Temple", "description": "Famous Ganesha temple visited by celebrities", "latitude": 19.0176, "longitude": 72.8562, "category": "cultural"},
+            {"name": "Trishna Restaurant", "description": "Award-winning seafood restaurant with contemporary Indian cuisine", "latitude": 18.9220, "longitude": 72.8347, "category": "food"},
+            {"name": "Aer Bar", "description": "Rooftop bar with stunning city skyline views", "latitude": 19.0176, "longitude": 72.8562, "category": "nightlife"}
         ],
         "delhi": [
             {"name": "Red Fort", "description": "Magnificent Mughal fortress complex and UNESCO World Heritage Site", "latitude": 28.6562, "longitude": 77.2410, "category": "heritage"},
             {"name": "India Gate", "description": "War memorial arch honoring Indian soldiers", "latitude": 28.6129, "longitude": 77.2295, "category": "heritage"},
             {"name": "Qutub Minar", "description": "Tallest brick minaret showcasing Indo-Islamic architecture", "latitude": 28.5245, "longitude": 77.1855, "category": "heritage"},
-            {"name": "Lotus Temple", "description": "Bahá'í House of Worship with lotus-shaped architecture", "latitude": 28.5535, "longitude": 77.2588, "category": "cultural"},
+            {"name": "Lotus Temple", "description": "Bahai House of Worship with lotus-shaped architecture", "latitude": 28.5535, "longitude": 77.2588, "category": "cultural"},
             {"name": "Chandni Chowk", "description": "Historic market area famous for street food", "latitude": 28.6506, "longitude": 77.2334, "category": "shopping"},
             {"name": "Humayun's Tomb", "description": "Mughal tomb inspiring the Taj Mahal design", "latitude": 28.5933, "longitude": 77.2507, "category": "heritage"},
             {"name": "Akshardham Temple", "description": "Modern Hindu temple complex with cultural exhibitions", "latitude": 28.6127, "longitude": 77.2773, "category": "cultural"},
@@ -713,6 +710,8 @@ def get_real_places_for_destination(destination: str, theme: str) -> list:
             {"name": "Jama Masjid", "description": "Largest mosque in India built by Shah Jahan", "latitude": 28.6507, "longitude": 77.2334, "category": "heritage"},
             {"name": "Raj Ghat", "description": "Memorial to Mahatma Gandhi at his cremation site", "latitude": 28.6418, "longitude": 77.2482, "category": "cultural"},
             {"name": "National Museum", "description": "Premier museum showcasing Indian history and art", "latitude": 28.6118, "longitude": 77.2194, "category": "cultural"},
+            {"name": "Karim's Restaurant", "description": "Legendary Mughlai restaurant serving authentic Delhi cuisine", "latitude": 28.6506, "longitude": 77.2334, "category": "food"},
+            {"name": "Hauz Khas Village", "description": "Trendy area with boutiques, cafes, and vibrant nightlife", "latitude": 28.5494, "longitude": 77.1956, "category": "nightlife"}
         ],
         "tiruchirappalli": [
             {"name": "Sri Ranganathaswamy Temple", "description": "Largest functioning Hindu temple complex in the world", "latitude": 10.8626, "longitude": 78.7066, "category": "heritage"},
@@ -723,7 +722,7 @@ def get_real_places_for_destination(destination: str, theme: str) -> list:
             {"name": "Butterfly Garden", "description": "Nature park with diverse butterfly species", "latitude": 10.7905, "longitude": 78.7047, "category": "nature"},
             {"name": "Mukkombu", "description": "Tourist spot with gardens and river views", "latitude": 10.8626, "longitude": 78.7066, "category": "nature"},
             {"name": "Puliyancholai Falls", "description": "Scenic waterfall in Kolli Hills near Trichy", "latitude": 11.3667, "longitude": 78.3333, "category": "adventure"},
-            {"name": "Samayapuram Temple", "description": "Famous Mariamman temple known for worship rituals", "latitude": 10.9667, "longitude": 78.6333, "category": "cultural"},
+            {"name": "Samayapuram Temple", "description": "Famous Mariamman temple known for worship rituals", "latitude": 10.9667, "longitude": 78.6333, "category": "cultural"}
         ]
     }
     
@@ -741,22 +740,35 @@ def get_real_places_for_destination(destination: str, theme: str) -> list:
             {"name": f"Riverside Park {destination.title()}", "description": f"Scenic park along {destination}'s main waterway", "latitude": 12.9316, "longitude": 77.5546, "category": "nature"},
         ]
     
-    # Filter by theme if possible
+    # Enhanced theme mapping for multiple theme support
     theme_mapping = {
         "heritage": ["heritage", "cultural"],
         "cultural": ["cultural", "heritage"],
         "nature": ["nature"],
         "adventure": ["adventure", "nature"],
         "shopping": ["shopping"],
-        "food": ["cultural", "shopping"],
-        "nightlife": ["cultural", "shopping"],
+        "food": ["food", "cultural", "shopping"],
+        "nightlife": ["nightlife", "cultural", "shopping"],
+        "sightseeing": ["sightseeing", "heritage", "cultural"]
     }
     
-    preferred_categories = theme_mapping.get(theme, ["cultural", "heritage", "nature"])
+    # Collect all preferred categories from all selected themes
+    preferred_categories = []
+    for theme in themes:
+        preferred_categories.extend(theme_mapping.get(theme, [theme]))
     
-    # Sort places by theme relevance
-    themed_places = [p for p in destination_places if p["category"] in preferred_categories]
-    other_places = [p for p in destination_places if p["category"] not in preferred_categories]
+    # Remove duplicates while preserving order
+    preferred_categories = list(dict.fromkeys(preferred_categories))
+    
+    # Sort places by theme relevance - prioritize places matching selected themes
+    themed_places = []
+    other_places = []
+    
+    for place in destination_places:
+        if place["category"] in preferred_categories:
+            themed_places.append(place)
+        else:
+            other_places.append(place)
     
     # Return themed places first, then others for variety
     return themed_places + other_places
@@ -768,6 +780,7 @@ def create_fallback_itinerary(user_inputs: dict) -> dict:
     budget_per_day = user_inputs['budget'] // user_inputs['duration']
     cost_per_activity = budget_per_day // 3
     user_comments = user_inputs.get('user_comments', '')
+    themes = user_inputs.get('themes', ['cultural'])
     
     # Try to incorporate user preferences in fallback
     activity_suffix = ""
@@ -784,18 +797,22 @@ def create_fallback_itinerary(user_inputs: dict) -> dict:
         "total_estimated_cost": user_inputs['budget']
     }
     
+    themes_str = ", ".join(themes)
+    
     for day_num in range(1, user_inputs['duration'] + 1):
         day_activities = []
         for i in range(2):  # 2 activities per day
+            # Cycle through themes for variety
+            current_theme = themes[i % len(themes)]
             activity = {
                 "name": f"Explore {destination}{activity_suffix} - Day {day_num} Activity {i + 1}",
-                "description": f"Discover the {user_inputs['theme']} aspects of {destination}" + 
+                "description": f"Discover the {themes_str} aspects of {destination}" + 
                               (f", tailored to your preferences: {user_comments[:50]}..." if user_comments else "."),
                 "latitude": location_coords['latitude'] + (i * 0.01),
                 "longitude": location_coords['longitude'] + (i * 0.01),
                 "estimated_cost": cost_per_activity,
                 "duration_hours": 2.5,
-                "category": user_inputs['theme'] if user_inputs['theme'] in ['sightseeing', 'food', 'adventure', 'cultural', 'shopping', 'nature', 'nightlife', 'heritage'] else 'sightseeing',
+                "category": current_theme if current_theme in ['sightseeing', 'food', 'adventure', 'cultural', 'shopping', 'nature', 'nightlife', 'heritage'] else 'sightseeing',
                 "best_time": f"{10 + i*3}:00 AM - {13 + i*3}:00 PM"
             }
             day_activities.append(activity)
@@ -822,6 +839,7 @@ def get_location_coordinates_dict(location: str) -> dict:
         "pune": {"latitude": 18.5204, "longitude": 73.8567},
         "kolkata": {"latitude": 22.5726, "longitude": 88.3639},
         "melmaruvathur": {"latitude": 12.4801, "longitude": 79.8547},
+        "tiruchirappalli": {"latitude": 10.8155, "longitude": 78.7047},
         "paris": {"latitude": 48.8566, "longitude": 2.3522},
         "london": {"latitude": 51.5074, "longitude": -0.1278},
         "tokyo": {"latitude": 35.6762, "longitude": 139.6503},
@@ -846,8 +864,13 @@ def process_payment(payment_token: str) -> bool:
 # --- API Routes ---
 @app.post("/trip/generate-itinerary", response_model=Itinerary)
 async def generate_itinerary(req: TripRequest):
-    """Generate itinerary with enhanced user comments processing"""
-    print(f"Generating itinerary with user comments: {req.user_comments[:100] if req.user_comments else 'None'}...")
+    """Generate itinerary with enhanced user comments processing and multiple themes support"""
+    print(f"Generating itinerary with themes: {req.themes}")
+    print(f"User comments: {req.user_comments[:100] if req.user_comments else 'None'}...")
+    
+    # Validate that themes is not empty
+    if not req.themes or len(req.themes) == 0:
+        raise HTTPException(status_code=400, detail="At least one theme must be selected")
     
     itinerary_data = generate_itinerary_with_genai(req.dict())
     if not itinerary_data or "days" not in itinerary_data:
@@ -908,13 +931,13 @@ async def generate_itinerary(req: TripRequest):
             location=req.location,
             duration=req.duration,
             budget=req.budget,
-            theme=req.theme,
+            themes=req.themes,  # Return the themes list
             start_date=req.start_date,
             traveler_count=req.traveler_count,
             preferred_transport=req.preferred_transport,
             from_location=req.from_location,
             to_location=req.to_location,
-            user_comments=req.user_comments,  # Include user comments in response
+            user_comments=req.user_comments,
             days=days,
             total_estimated_cost=total_cost,
             hotels=hotels,
@@ -979,22 +1002,24 @@ async def get_route(from_location: str, to_location: str, travel_mode: str = "dr
     else:
         raise HTTPException(status_code=404, detail="Route not found")
 
-# New endpoint for analyzing user comments and providing suggestions
+# Enhanced endpoint for analyzing user comments with multiple themes support
 @app.post("/trip/analyze-preferences")
-async def analyze_user_preferences(user_comments: str, destination: str):
-    """Analyze user comments and provide personalized suggestions"""
+async def analyze_user_preferences(user_comments: str, destination: str, themes: List[str] = None):
+    """Analyze user comments and provide personalized suggestions for multiple themes"""
     if not user_comments.strip():
-        return {"suggestions": [], "themes": [], "message": "No comments provided for analysis"}
+        return {"suggestions": [], "themes": themes or [], "message": "No comments provided for analysis"}
     
     model = get_genai_model()
     
+    themes_context = f" considering the selected themes: {', '.join(themes)}" if themes else ""
+    
     prompt = f"""
-    Analyze these user travel preferences for {destination}:
+    Analyze these user travel preferences for {destination}{themes_context}:
     "{user_comments}"
     
     Provide suggestions in the following format:
-    1. Recommended themes (cultural, adventure, food, nature, etc.)
-    2. Specific activity suggestions
+    1. How well the user preferences align with selected themes
+    2. Specific activity suggestions that match both preferences and themes
     3. Timing recommendations
     4. Budget considerations
     5. Travel tips based on their preferences
@@ -1006,24 +1031,29 @@ async def analyze_user_preferences(user_comments: str, destination: str):
         response = model.generate_content(prompt)
         analysis = response.text if response else "Unable to analyze preferences"
         
-        # Extract themes based on keywords
-        themes = []
-        if any(word in user_comments.lower() for word in ['food', 'eat', 'cuisine', 'restaurant', 'local dishes']):
-            themes.append('food')
-        if any(word in user_comments.lower() for word in ['history', 'historical', 'museum', 'heritage', 'culture']):
-            themes.append('cultural')
-        if any(word in user_comments.lower() for word in ['adventure', 'hiking', 'outdoor', 'sports', 'thrill']):
-            themes.append('adventure')
-        if any(word in user_comments.lower() for word in ['nature', 'park', 'garden', 'wildlife', 'scenic']):
-            themes.append('nature')
-        if any(word in user_comments.lower() for word in ['shopping', 'market', 'buy', 'souvenir']):
-            themes.append('shopping')
-        if any(word in user_comments.lower() for word in ['nightlife', 'bar', 'club', 'evening', 'night']):
-            themes.append('nightlife')
+        # Extract themes based on keywords (enhanced)
+        detected_themes = []
+        comment_lower = user_comments.lower()
+        
+        theme_keywords = {
+            'food': ['food', 'eat', 'cuisine', 'restaurant', 'local dishes', 'cooking', 'chef', 'dining'],
+            'cultural': ['history', 'historical', 'museum', 'heritage', 'culture', 'traditional', 'art', 'music'],
+            'adventure': ['adventure', 'hiking', 'outdoor', 'sports', 'thrill', 'climbing', 'trekking'],
+            'nature': ['nature', 'park', 'garden', 'wildlife', 'scenic', 'forest', 'mountains', 'beach'],
+            'shopping': ['shopping', 'market', 'buy', 'souvenir', 'boutique', 'mall', 'crafts'],
+            'nightlife': ['nightlife', 'bar', 'club', 'evening', 'night', 'drinks', 'party'],
+            'heritage': ['heritage', 'ancient', 'monument', 'temple', 'palace', 'fort', 'archaeological'],
+            'sightseeing': ['sightseeing', 'tourist', 'landmark', 'famous', 'iconic', 'visit', 'see']
+        }
+        
+        for theme, keywords in theme_keywords.items():
+            if any(keyword in comment_lower for keyword in keywords):
+                detected_themes.append(theme)
         
         return {
             "analysis": analysis,
-            "suggested_themes": themes,
+            "suggested_themes": detected_themes,
+            "selected_themes": themes or [],
             "user_comments": user_comments,
             "destination": destination
         }
@@ -1031,6 +1061,7 @@ async def analyze_user_preferences(user_comments: str, destination: str):
         return {
             "error": f"Failed to analyze preferences: {str(e)}",
             "suggested_themes": ["cultural"],  # fallback
+            "selected_themes": themes or [],
             "user_comments": user_comments,
             "destination": destination
         }
@@ -1038,10 +1069,11 @@ async def analyze_user_preferences(user_comments: str, destination: str):
 @app.get("/status")
 async def status():
     return {
-        "status": "AI Trip Planner with User Comments Support is running",
+        "status": "AI Trip Planner with Multiple Themes Support is running",
         "bookings_count": len(bookings),
         "features": [
             "AI-powered itinerary generation",
+            "Multiple themes selection support",
             "User comments and preferences integration",
             "2-3 activities per day with best timing",
             "Weather forecast integration",
@@ -1051,22 +1083,26 @@ async def status():
             "Route planning via Google Directions API",
             "Multi-transport mode support",
             "Personalized recommendations based on user feedback",
-            "Theme-based recommendations",
+            "Theme-based activity filtering and prioritization",
             "Robust JSON parsing",
             "Fallback itinerary generation"
+        ],
+        "supported_themes": [
+            "cultural", "adventure", "heritage", "nightlife", 
+            "food", "nature", "shopping", "sightseeing"
         ],
         "supported_transport_modes": [
             "driving", "car", "walking", "transit",
             "public_transport", "bicycling", "bike"
         ],
-        "version": "4.0"
+        "version": "4.1"
     }
 
 @app.get("/")
 async def root():
     return {
-        "message": "Welcome to the Enhanced AI Trip Planner API with User Comments Support",
-        "description": "Generate personalized travel itineraries with AI, incorporating user preferences and comments",
+        "message": "Welcome to the Enhanced AI Trip Planner API with Multiple Themes Support",
+        "description": "Generate personalized travel itineraries with AI, supporting multiple themes and user preferences",
         "endpoints": {
             "generate_itinerary": "/trip/generate-itinerary",
             "analyze_preferences": "/trip/analyze-preferences",
@@ -1078,14 +1114,20 @@ async def root():
             "status": "/status"
         },
         "new_features": [
+            "Multiple themes selection support",
+            "Enhanced theme-based activity filtering",
             "User comments and preferences integration",
             "Personalized activity recommendations",
-            "Enhanced AI prompts with user context",
-            "Preference analysis endpoint",
-            "Tailored activity descriptions",
+            "Enhanced AI prompts with multiple theme context",
+            "Preference analysis with theme alignment",
+            "Tailored activity descriptions for multiple themes",
             "Weather forecast integration",
             "Hotel recommendations from Google Places",
             "Route planning with multiple transport modes"
+        ],
+        "supported_themes": [
+            "cultural", "adventure", "heritage", "nightlife", 
+            "food", "nature", "shopping", "sightseeing"
         ],
         "docs": "/docs"
     }
