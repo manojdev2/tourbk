@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 import os
 import uvicorn
 import json
@@ -84,7 +84,7 @@ class Itinerary(BaseModel):
     location: str
     duration: int
     budget: int
-    themes: List[str]  # Changed from theme: str to themes: List[str]
+    themes: List[str]
     start_date: Optional[str] = None
     traveler_count: Optional[int] = None
     preferred_transport: Optional[str] = None
@@ -95,6 +95,7 @@ class Itinerary(BaseModel):
     total_estimated_cost: Optional[int] = None
     hotels: Optional[List[Hotel]] = None
     route_details: Optional[RouteDetails] = None
+    cost_breakdown: Optional[Dict[str, int]] = None
 
 class BookingRequest(BaseModel):
     itinerary_id: str
@@ -274,7 +275,111 @@ def validate_json_structure(data: dict) -> bool:
                 return False
     return True
 
-def generate_itinerary_with_genai(user_inputs: dict) -> dict:
+# def generate_itinerary_with_genai(user_inputs: dict) -> dict:
+#     model = get_genai_model()
+#     destination = user_inputs.get('to_location') or user_inputs.get('location')
+#     traveler_count = user_inputs.get('traveler_count', 1)
+#     budget = user_inputs['budget']
+#     duration = user_inputs['duration']
+#     themes = user_inputs['themes']  # Now it's a list
+#     start_date = user_inputs.get('start_date')
+#     preferred_transport = user_inputs.get('preferred_transport', 'any')
+#     user_comments = user_inputs.get('user_comments', '')
+
+#     # Create themes string for prompt
+#     themes_str = ", ".join(themes) if themes else "general"
+#     primary_theme = themes[0] if themes else "cultural"
+
+#     comments_info = ""
+#     if user_comments:
+#         comments_info = f"\n\nUSER PREFERENCES: \"{user_comments}\"\n" \
+#                         f"Incorporate these preferences when selecting specific real places and activities."
+
+#     budget_per_person = budget // traveler_count
+#     budget_per_person_per_day = budget_per_person // duration
+#     budget_per_activity_per_person = budget_per_person_per_day // 3
+
+#     prompt = f"""You are a travel expert for {destination}. Generate a {duration}-day itinerary with REAL, SPECIFIC places only.
+
+# DESTINATION: {destination}
+# THEMES: {themes_str} (focus on only selected themes throughout the trip)
+# BUDGET: INR {budget} total, for {traveler_count} traveler(s)
+# ALL ACTIVITY COSTS ARE PER TRAVELER, NOT TOTAL.
+# DATES: {start_date if start_date else "Flexible"}
+# TRANSPORT: {preferred_transport}
+# {comments_info}
+
+# IMPORTANT: Mix activities from only selected themes ({themes_str}) across different days. Don't focus on just one theme per day.
+
+# RETURN ONLY VALID JSON - NO other text, explanations, or markdown:
+
+# {{
+#   "days": [
+#     {{
+#       "day": 1,
+#       "activities": [
+#         {{
+#           "name": "REAL PLACE NAME",
+#           "description": "...",
+#           "latitude": 00.0000,
+#           "longitude": 00.0000,
+#           "estimated_cost": {budget_per_activity_per_person},
+#           "duration_hours": 2.5,
+#           "category": "one_of_selected_themes",
+#           "best_time": "10:00 AM - 1:00 PM"
+#         }}
+#       ],
+#       "total_day_cost": {budget_per_person_per_day}
+#     }}
+#   ],
+#   "total_estimated_cost": {budget_per_person}
+# }}
+# CRITICAL RULES:
+# 1. Use ONLY real, famous, specific places in {destination}
+# 2. NO generic names like "Activity 1" or "Local Market"
+# 3. Each activity cost is per person (multiply by traveler_count for day and trip totals)
+# 4. Per traveler daily cost must not exceed INR {budget_per_person_per_day}
+# 5. All days combined for all travelers must not exceed total budget INR {budget}
+# 6. Include activities from only selected themes: {themes_str}
+# 7. Categories should match selected themes: {themes_str}
+# 8. Include atleast 4-6 activities per day, if budget allows
+# 9. Vary the theme categories across days for diversity
+# """
+
+#     try:
+#         response = model.generate_content(
+#             prompt,
+#             generation_config={
+#                 "temperature": 0.3,
+#                 "top_p": 0.7,
+#                 "candidate_count": 1,
+#             },
+#         )
+
+#         output_text = response.text or ""
+#         cleaned_json = extract_and_clean_json(output_text)
+#         parsed_data = json.loads(cleaned_json)
+
+#         # Validate costs for all travelers/duration
+#         total_cost = sum(
+#             day.get('total_day_cost', 0) * traveler_count
+#             for day in parsed_data.get('days', [])
+#         )
+#         if total_cost <= budget:
+#             parsed_data['total_estimated_cost'] = total_cost
+#             return parsed_data
+#         else:
+#             # Prune or scale so costs fit
+#             return adjust_costs_to_budget(parsed_data, budget, traveler_count, duration)
+
+#         # fallback if structure invalid
+#         return generate_with_specific_places(user_inputs, destination)
+
+#     except Exception as e:
+#         print(f"❌ Error: {str(e)}")
+#         return generate_with_specific_places(user_inputs, destination)
+
+def generate_itinerary_with_genai(user_inputs: dict, weather_forecasts: List[WeatherForecast] = None) -> dict:
     model = get_genai_model()
     destination = user_inputs.get('to_location') or user_inputs.get('location')
     traveler_count = user_inputs.get('traveler_count', 1)
@@ -298,6 +403,14 @@ def generate_itinerary_with_genai(user_inputs: dict) -> dict:
     budget_per_person_per_day = budget_per_person // duration
     budget_per_activity_per_person = budget_per_person_per_day // 3
 
+    # Create weather context for prompt
+    weather_context = ""
+    if weather_forecasts and start_date:
+        weather_context = "\n\nWEATHER FORECAST:\n"
+        for i, forecast in enumerate(weather_forecasts):
+            weather_context += f"Day {i+1} ({forecast.date}): {forecast.condition}, Max Temp: {forecast.max_temp_c}°C, Min Temp: {forecast.min_temp_c}°C, Rain Chance: {forecast.chance_of_rain}%.\n"
+        weather_context += "Adjust activities and best_time based on weather (e.g., indoor activities for rain > 50% or temp > 35°C, morning for heat)."
+
     prompt = f"""You are a travel expert for {destination}. Generate a {duration}-day itinerary with REAL, SPECIFIC places only.
 
 DESTINATION: {destination}
@@ -307,6 +420,7 @@ ALL ACTIVITY COSTS ARE PER TRAVELER, NOT TOTAL.
 DATES: {start_date if start_date else "Flexible"}
 TRANSPORT: {preferred_transport}
 {comments_info}
+{weather_context}
 
 IMPORTANT: Mix activities from only selected themes ({themes_str}) across different days. Don't focus on just one theme per day.
 
@@ -341,8 +455,9 @@ CRITICAL RULES:
 5. All days combined for all travelers must not exceed total budget INR {budget}
 6. Include activities from only selected themes: {themes_str}
 7. Categories should match selected themes: {themes_str}
-8. Include atleast 4-6 activities per day, if budget allows
+8. Include at least 4-6 activities per day, if budget allows
 9. Vary the theme categories across days for diversity
+10. Adjust best_time based on weather (e.g., morning for heat, indoor for rain > 50%)
 """
 
     try:
@@ -371,13 +486,13 @@ CRITICAL RULES:
             # Prune or scale so costs fit
             return adjust_costs_to_budget(parsed_data, budget, traveler_count, duration)
 
-        # fallback if structure invalid
+        # Fallback if structure invalid
         return generate_with_specific_places(user_inputs, destination)
 
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         return generate_with_specific_places(user_inputs, destination)
-
+    
 def extract_and_clean_json(text: str) -> str:
     """Enhanced JSON extraction with multiple strategies"""
     
@@ -862,30 +977,121 @@ def process_payment(payment_token: str) -> bool:
     return True
 
 # --- API Routes ---
+# @app.post("/trip/generate-itinerary", response_model=Itinerary)
+# async def generate_itinerary(req: TripRequest):
+#     """Generate itinerary with enhanced user comments processing and multiple themes support"""
+#     print(f"Generating itinerary with themes: {req.themes}")
+#     print(f"User comments: {req.user_comments[:100] if req.user_comments else 'None'}...")
+    
+#     # Validate that themes is not empty
+#     if not req.themes or len(req.themes) == 0:
+#         raise HTTPException(status_code=400, detail="At least one theme must be selected")
+    
+#     itinerary_data = generate_itinerary_with_genai(req.dict())
+#     if not itinerary_data or "days" not in itinerary_data:
+#         raise HTTPException(status_code=500, detail="Failed to generate itinerary")
+
+#     hotels = find_hotels_near_location(req.to_location or req.location) if req.to_location or req.location else []
+#     route_details = get_route_details(req.from_location, req.to_location, req.preferred_transport or "driving") if req.from_location and req.to_location else None
+#     weather_forecasts = get_weather_forecast(req.to_location or req.location, req.start_date, req.duration) if req.start_date else []
+
+#     try:
+#         days = []
+#         start_date = datetime.strptime(req.start_date, "%Y-%m-%d") if req.start_date else datetime.now()
+        
+#         for idx, day_data in enumerate(itinerary_data.get("days", [])):
+#             activities = []
+#             for activity_data in day_data.get("activities", []):
+#                 lat = activity_data.get("latitude")
+#                 lng = activity_data.get("longitude")
+#                 if lat is not None and lng is not None:
+#                     try:
+#                         lat = float(lat)
+#                         lng = float(lng)
+#                         if not validate_coordinates(lat, lng):
+#                             lat, lng = None, None
+#                     except (ValueError, TypeError):
+#                         lat, lng = None, None
+                
+#                 cost = int(activity_data.get("estimated_cost", 0) * req.traveler_count) if activity_data.get("estimated_cost") else 0
+#                 duration = float(activity_data.get("duration_hours")) if activity_data.get("duration_hours") else None
+                
+#                 activity = Activity(
+#                     name=activity_data.get("name", "Unknown Activity"),
+#                     description=activity_data.get("description", "No description available"),
+#                     latitude=lat,
+#                     longitude=lng,
+#                     estimated_cost=cost,
+#                     duration_hours=duration,
+#                     category=activity_data.get("category", "general"),
+#                     best_time=activity_data.get("best_time", "9:00 AM - 12:00 PM")
+#                 )
+#                 activities.append(activity)
+            
+#             day_cost = int(day_data.get("total_day_cost", 0) * req.traveler_count) if day_data.get("total_day_cost") else None
+#             day = ItineraryDay(
+#                 day=day_data.get("day", 0),
+#                 date=(start_date + timedelta(days=idx)).strftime("%Y-%m-%d"),
+#                 activities=activities,
+#                 weather=weather_forecasts[idx] if idx < len(weather_forecasts) else None,
+#                 total_day_cost=day_cost
+#             )
+#             days.append(day)
+        
+#         total_cost = int(itinerary_data.get("total_estimated_cost", calculate_total_cost(days)))
+#         if route_details and route_details.estimated_cost:
+#             total_cost += route_details.estimated_cost
+        
+#         return Itinerary(
+#             location=req.location,
+#             duration=req.duration,
+#             budget=req.budget,
+#             themes=req.themes,  # Return the themes list
+#             start_date=req.start_date,
+#             traveler_count=req.traveler_count,
+#             preferred_transport=req.preferred_transport,
+#             from_location=req.from_location,
+#             to_location=req.to_location,
+#             user_comments=req.user_comments,
+#             days=days,
+#             total_estimated_cost=total_cost,
+#             hotels=hotels,
+#             route_details=route_details
+#         )
+#     except Exception as e:
+#         print(f"Error parsing itinerary data: {str(e)}")
+#         raise HTTPException(status_code=500, detail=f"Failed to parse itinerary data: {str(e)}")
+
 @app.post("/trip/generate-itinerary", response_model=Itinerary)
 async def generate_itinerary(req: TripRequest):
-    """Generate itinerary with enhanced user comments processing and multiple themes support"""
+    """Generate itinerary with correct cost calculations"""
     print(f"Generating itinerary with themes: {req.themes}")
     print(f"User comments: {req.user_comments[:100] if req.user_comments else 'None'}...")
+    print(f"Budget: ₹{req.budget}, Travelers: {req.traveler_count}, Duration: {req.duration} days")
     
     # Validate that themes is not empty
     if not req.themes or len(req.themes) == 0:
         raise HTTPException(status_code=400, detail="At least one theme must be selected")
     
-    itinerary_data = generate_itinerary_with_genai(req.dict())
+    weather_forecasts = get_weather_forecast(req.to_location or req.location, req.start_date, req.duration) if req.start_date else []
+    
+    itinerary_data = generate_itinerary_with_genai(req.model_dump(), weather_forecasts)
     if not itinerary_data or "days" not in itinerary_data:
         raise HTTPException(status_code=500, detail="Failed to generate itinerary")
 
     hotels = find_hotels_near_location(req.to_location or req.location) if req.to_location or req.location else []
     route_details = get_route_details(req.from_location, req.to_location, req.preferred_transport or "driving") if req.from_location and req.to_location else None
-    weather_forecasts = get_weather_forecast(req.to_location or req.location, req.start_date, req.duration) if req.start_date else []
 
     try:
         days = []
         start_date = datetime.strptime(req.start_date, "%Y-%m-%d") if req.start_date else datetime.now()
         
+        total_activities_cost = 0
+        
         for idx, day_data in enumerate(itinerary_data.get("days", [])):
             activities = []
+            day_activities_cost = 0
+            
             for activity_data in day_data.get("activities", []):
                 lat = activity_data.get("latitude")
                 lng = activity_data.get("longitude")
@@ -898,7 +1104,10 @@ async def generate_itinerary(req: TripRequest):
                     except (ValueError, TypeError):
                         lat, lng = None, None
                 
-                cost = int(activity_data.get("estimated_cost", 0) * req.traveler_count) if activity_data.get("estimated_cost") else 0
+                # Cost from AI, assumed per person, convert to total for group
+                cost_per_person_str = activity_data.get("estimated_cost", 0)
+                cost_per_person = float(cost_per_person_str) if cost_per_person_str else 0
+                total_cost = int(cost_per_person * req.traveler_count)
                 duration = float(activity_data.get("duration_hours")) if activity_data.get("duration_hours") else None
                 
                 activity = Activity(
@@ -906,32 +1115,66 @@ async def generate_itinerary(req: TripRequest):
                     description=activity_data.get("description", "No description available"),
                     latitude=lat,
                     longitude=lng,
-                    estimated_cost=cost,
+                    estimated_cost=total_cost,  # Total for all travelers
                     duration_hours=duration,
                     category=activity_data.get("category", "general"),
                     best_time=activity_data.get("best_time", "9:00 AM - 12:00 PM")
                 )
                 activities.append(activity)
+                day_activities_cost += total_cost
             
-            day_cost = int(day_data.get("total_day_cost", 0) * req.traveler_count) if day_data.get("total_day_cost") else None
+            # Day cost is total for all travelers
+            day_total_cost = day_activities_cost
+            total_activities_cost += day_activities_cost
+            
             day = ItineraryDay(
                 day=day_data.get("day", 0),
                 date=(start_date + timedelta(days=idx)).strftime("%Y-%m-%d"),
                 activities=activities,
                 weather=weather_forecasts[idx] if idx < len(weather_forecasts) else None,
-                total_day_cost=day_cost
+                total_day_cost=day_total_cost
             )
             days.append(day)
         
-        total_cost = int(itinerary_data.get("total_estimated_cost", calculate_total_cost(days)))
-        if route_details and route_details.estimated_cost:
-            total_cost += route_details.estimated_cost
+        # Calculate cost breakdown
+        accommodation_cost = 0
+        if hotels and len(hotels) > 0:
+            avg_hotel_price = hotels[0].price_per_night if hasattr(hotels[0], 'price_per_night') and hotels[0].price_per_night else 1000
+            rooms_needed = max(1, (req.traveler_count + 1) // 2)  # Assume 2 travelers per room
+            accommodation_cost = avg_hotel_price * req.duration * rooms_needed
+        
+        transportation_cost = route_details.estimated_cost if route_details and route_details.estimated_cost else 0
+        
+        # Food estimate: 500 per person per day
+        food_cost = 500 * req.duration * req.traveler_count
+        
+        # Miscellaneous: 10% of activities + accommodation + food
+        miscellaneous_cost = int((total_activities_cost + accommodation_cost + food_cost) * 0.1)
+        
+        total_estimated_cost = total_activities_cost + accommodation_cost + transportation_cost + food_cost + miscellaneous_cost
+        
+        print(f"💰 Cost Breakdown:")
+        print(f"   Activities: ₹{total_activities_cost}")
+        print(f"   Accommodation: ₹{accommodation_cost}")
+        print(f"   Food: ₹{food_cost}")
+        print(f"   Transportation: ₹{transportation_cost}")
+        print(f"   Miscellaneous: ₹{miscellaneous_cost}")
+        print(f"   TOTAL: ₹{total_estimated_cost}")
+        
+        cost_breakdown = {
+            "accommodation": accommodation_cost,
+            "activities": total_activities_cost,
+            "transportation": transportation_cost,
+            "food": food_cost,
+            "miscellaneous": miscellaneous_cost,
+            "total": total_estimated_cost
+        }
         
         return Itinerary(
             location=req.location,
             duration=req.duration,
             budget=req.budget,
-            themes=req.themes,  # Return the themes list
+            themes=req.themes,
             start_date=req.start_date,
             traveler_count=req.traveler_count,
             preferred_transport=req.preferred_transport,
@@ -939,14 +1182,15 @@ async def generate_itinerary(req: TripRequest):
             to_location=req.to_location,
             user_comments=req.user_comments,
             days=days,
-            total_estimated_cost=total_cost,
+            total_estimated_cost=total_estimated_cost,
             hotels=hotels,
-            route_details=route_details
+            route_details=route_details,
+            cost_breakdown=cost_breakdown
         )
     except Exception as e:
         print(f"Error parsing itinerary data: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to parse itinerary data: {str(e)}")
-
+      
 @app.post("/trip/book-itinerary")
 async def book_itinerary(req: BookingRequest):
     if not process_payment(req.payment_token):
