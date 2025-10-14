@@ -20,8 +20,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# API Keys
-GOOGLE_MAPS_API_KEY = "AIzaSyDAUhNkL--7MVKHtlFuR3acwa7ED-cIoAU"
+# API KeysAIzaSyCP7SXQh5kgSk7wHiz2rgyqgs-0knykZxQ"
+GOOGLE_MAPS_API_KEY = "
 WEATHER_API_KEY = "6419738e339e4507aa8122732240910"
 WEATHER_API_URL = "http://api.weatherapi.com/v1"
 
