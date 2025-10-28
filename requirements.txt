@@ -3,3 +3,4 @@ uvicorn[standard]
 pydantic
 google-generativeai
 python-dotenv
+packaging>=24.0
